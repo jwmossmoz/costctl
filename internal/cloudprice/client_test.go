@@ -6,7 +6,9 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync/atomic"
 	"testing"
+	"time"
 )
 
 func newTestClient(t *testing.T, handler http.HandlerFunc) (*Client, *httptest.Server) {
@@ -15,6 +17,9 @@ func newTestClient(t *testing.T, handler http.HandlerFunc) (*Client, *httptest.S
 	t.Cleanup(srv.Close)
 	c := New("test-key")
 	c.BaseURL = srv.URL
+	// Most tests want predictable hits to the test server — keep cache off
+	// by default and let the cache-specific test opt back in.
+	c.UseCache = false
 	return c, srv
 }
 
@@ -159,5 +164,68 @@ func TestGCPHistory_RejectsEmptyInput(t *testing.T) {
 	}
 	if _, err := New("").GCPHistory(context.Background(), "x", "us-central1", ""); err == nil {
 		t.Error("expected error for empty key")
+	}
+}
+
+func TestDoJSON_RetriesOn429(t *testing.T) {
+	var hits int32
+	c, _ := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
+		n := atomic.AddInt32(&hits, 1)
+		if n <= 2 {
+			w.Header().Set("Retry-After", "0")
+			http.Error(w, `{"error":{"code":"rate_limited"}}`, http.StatusTooManyRequests)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{
+			"currency":"USD","tier":"spot","numberOfItems":0,
+			"listHistoryPriceValues":[]
+		}`))
+	})
+	c.UseCache = false                   // bypass cache so retries run
+	c.BaseBackoff = 1 * time.Millisecond // keep test fast
+
+	_, err := c.PriceHistory(context.Background(), "X", "westus2", "spot")
+	if err != nil {
+		t.Fatalf("PriceHistory after retries: %v", err)
+	}
+	if got := atomic.LoadInt32(&hits); got != 3 {
+		t.Errorf("hits = %d; want 3 (2 retries + 1 success)", got)
+	}
+}
+
+func TestDoJSON_429ExhaustsAndErrors(t *testing.T) {
+	c, _ := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
+		http.Error(w, `{"error":{"code":"rate_limited"}}`, http.StatusTooManyRequests)
+	})
+	c.UseCache = false
+	c.BaseBackoff = 1 * time.Millisecond
+	c.MaxRetries = 2
+
+	_, err := c.PriceHistory(context.Background(), "X", "westus2", "spot")
+	if err == nil || !strings.Contains(err.Error(), "429") {
+		t.Fatalf("expected 429 error after exhaustion, got: %v", err)
+	}
+}
+
+func TestCache_RoundTrip(t *testing.T) {
+	var hits int32
+	c, _ := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
+		atomic.AddInt32(&hits, 1)
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"currency":"USD","tier":"spot","listHistoryPriceValues":[]}`))
+	})
+	c.CacheDir = t.TempDir()
+	c.UseCache = true
+	c.CacheTTL = time.Hour
+
+	if _, err := c.PriceHistory(context.Background(), "X", "westus2", "spot"); err != nil {
+		t.Fatalf("first call: %v", err)
+	}
+	if _, err := c.PriceHistory(context.Background(), "X", "westus2", "spot"); err != nil {
+		t.Fatalf("second call: %v", err)
+	}
+	if got := atomic.LoadInt32(&hits); got != 1 {
+		t.Errorf("server hit %d times; want 1 (second call should be cache hit)", got)
 	}
 }

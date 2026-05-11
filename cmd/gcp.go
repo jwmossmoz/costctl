@@ -11,7 +11,6 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/jwmossmoz/costctl/internal/cloudprice"
 	cfg "github.com/jwmossmoz/costctl/internal/config"
 )
 
@@ -90,7 +89,7 @@ func runGCPSpotCurrent(cmd *cobra.Command, args []string) error {
 	}
 
 	progress("fetching GCP current prices for %s ...", flagMachine)
-	resp, err := cloudprice.New(key).GCPCurrent(ctx, flagMachine)
+	resp, err := newCloudpriceClient(key).GCPCurrent(ctx, flagMachine)
 	if err != nil {
 		return err
 	}
@@ -145,7 +144,7 @@ func runGCPSpotHistory(cmd *cobra.Command, args []string) error {
 
 	progress("fetching GCP history for %s in %s since %s ...",
 		flagMachine, flagGCPRegion, startDate)
-	resp, err := cloudprice.New(key).GCPHistory(ctx, flagMachine, flagGCPRegion, startDate)
+	resp, err := newCloudpriceClient(key).GCPHistory(ctx, flagMachine, flagGCPRegion, startDate)
 	if err != nil {
 		return err
 	}

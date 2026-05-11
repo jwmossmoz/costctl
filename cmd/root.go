@@ -5,14 +5,25 @@ import (
 	"fmt"
 	"os"
 	"runtime/debug"
+	"time"
 
 	"github.com/spf13/cobra"
+
+	"github.com/jwmossmoz/costctl/internal/cloudprice"
 )
 
 // Version is set via -ldflags at build time (Makefile / goreleaser). When the
 // binary is produced by plain `go install`, ldflags don't run; in that case we
 // fall back to the module version embedded by the Go toolchain.
 var Version = "dev"
+
+// newCloudpriceClient builds a cloudprice client honoring global cache flags.
+func newCloudpriceClient(key string) *cloudprice.Client {
+	c := cloudprice.New(key)
+	c.UseCache = !flagNoCache
+	c.CacheTTL = flagCacheTTL
+	return c
+}
 
 func resolveVersion() string {
 	if Version != "dev" {
@@ -27,10 +38,12 @@ func resolveVersion() string {
 
 // Global flags accessible from subcommands.
 var (
-	flagJSON    bool
-	flagVerbose bool
-	flagQuiet   bool
-	flagNoColor bool
+	flagJSON     bool
+	flagVerbose  bool
+	flagQuiet    bool
+	flagNoColor  bool
+	flagNoCache  bool
+	flagCacheTTL time.Duration
 )
 
 var rootCmd = &cobra.Command{
@@ -61,6 +74,9 @@ func init() {
 	rootCmd.PersistentFlags().BoolVarP(&flagVerbose, "verbose", "v", false, "show extra diagnostics on stderr")
 	rootCmd.PersistentFlags().BoolVarP(&flagQuiet, "quiet", "q", false, "suppress progress on stderr")
 	rootCmd.PersistentFlags().BoolVar(&flagNoColor, "no-color", false, "disable color output (also honors NO_COLOR)")
+	rootCmd.PersistentFlags().BoolVar(&flagNoCache, "no-cache", false, "disable on-disk response cache for this run")
+	rootCmd.PersistentFlags().DurationVar(&flagCacheTTL, "cache-ttl", cloudprice.DefaultCacheTTL,
+		"response cache freshness window")
 	rootCmd.Version = resolveVersion()
 	rootCmd.SetVersionTemplate("costctl {{.Version}}\n")
 }
