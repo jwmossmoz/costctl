@@ -19,11 +19,11 @@ const envCloudpriceKey = "CLOUDPRICE_API_KEY"
 
 // shared azure spot flags
 var (
-	flagAPIKey  string
-	flagSKU     string
-	flagRegion  string
-	flagOS      string
-	flagTier    string
+	flagAPIKey string
+	flagSKU    string
+	flagRegion string
+	flagOS     string
+	flagTier   string
 )
 
 var azureCmd = &cobra.Command{

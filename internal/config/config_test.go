@@ -88,10 +88,10 @@ func TestResolveAPIKey_Precedence(t *testing.T) {
 	t.Setenv("CLOUDPRICE_API_KEY", "from-env")
 
 	cases := []struct {
-		name      string
-		flag      string
-		wantKey   string
-		wantSrc   string
+		name    string
+		flag    string
+		wantKey string
+		wantSrc string
 	}{
 		{"flag wins over env+config", "from-flag", "from-flag", "flag"},
 		{"env wins over config", "", "from-env", "env:CLOUDPRICE_API_KEY"},

@@ -72,16 +72,31 @@ Capturing what we learned the hard way so future agents don't have to retrace.
   SPA portal; the gateway is on a different subdomain).
 - Auth: `?subscription-key=<KEY>` query parameter. The `Ocp-Apim-Subscription-Key`
   header also works but the query form is what the portal documents.
-- Endpoint we use: `GET /api/v1/price_history_vm?vmname=<sku>&tier=<spot|standard|low>&regions=<region>`.
+- 401 → `cloudprice.ErrUnauthorized`. 404 → `cloudprice.ErrNotFound`.
+- The batch-export product (`/batch/azure/*.gz`) is a **paid add-on** and 401s
+  with a standard subscription key. We do not target it.
+
+**AzurePrice API v1** (used by `azure spot history`):
+- `GET /api/v1/price_history_vm?vmname=<sku>&tier=<spot|standard|low>&regions=<region>`.
 - `regions=` accepts **one** region. Comma-separated values return an empty list.
   Singular `region=` is silently ignored. To query multiple regions, loop.
 - `fromDate` / `toDate` parameters are accepted but ignored — the server caps the
   window to ~90 days regardless.
 - Response: newest entries first. Our client returns them as-is; the cobra layer
   reverses to oldest-first for human rendering.
-- 401 → `cloudprice.ErrUnauthorized`. 404 → `cloudprice.ErrNotFound`.
-- The batch-export product (`/batch/azure/*.gz`) is a **paid add-on** and 401s
-  with a standard subscription key. We do not target it.
+
+**CloudPrice API v2** (used by `gcp spot {current,history}`):
+- `GET /api/v2/gcp/compute/instances/{machineType}` — current prices, all regions.
+- `GET /api/v2/gcp/compute/instances/{machineType}/history?region=<r>&startDate=YYYYMMDD`.
+- `region` is required for `history`. Without it the API returns a default region
+  (currently us-central1) silently.
+- `startDate` format is `YYYYMMDD` **without dashes**. Anything else returns 500
+  with `{"status":"error","message":"Invalid startDate provided."}`.
+- Default window (no `startDate`) is only the last ~3 days. Always pass `startDate`.
+- Each history row carries ALL four price tiers (`PriceOnDemand`, `PriceSpot`,
+  `PriceCommit1Yr`, `PriceCommit3Yr`) — there's no tier filter param.
+- Response envelope is different from v1: `{Status, Data: {Items: [...]}}`. Don't
+  reuse v1 types — they won't decode.
 
 ### Azure Retail Prices (`prices.azure.com`)
 
