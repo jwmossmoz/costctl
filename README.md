@@ -1,9 +1,10 @@
 # costctl
 
-Multi-cloud cost and pricing CLI. Today: Azure VM spot pricing (current + ~90 days of history).
+Multi-cloud cost and pricing CLI. Today: **Azure** and **GCP** spot pricing (current + ~90 days of history).
 
-- **Current prices** come from the [Azure Retail Prices API](https://learn.microsoft.com/en-us/rest/api/cost-management/retail-prices/azure-retail-prices) — public, unauthenticated, current snapshot only.
-- **Historical prices** come from [cloudprice.net](https://developer.cloudprice.net/)'s AzurePrice API v1 — requires a free subscription key.
+- **Azure current** — [Azure Retail Prices API](https://learn.microsoft.com/en-us/rest/api/cost-management/retail-prices/azure-retail-prices) (unauthenticated, current snapshot only).
+- **Azure history** — [cloudprice.net](https://developer.cloudprice.net/) AzurePrice API v1 (requires subscription key).
+- **GCP current + history** — cloudprice.net CloudPrice API v2 (same key). No native Google API is used today; if and when GCP exposes preemptible/spot price history publicly, we'll prefer it.
 
 ## Install
 
@@ -32,15 +33,20 @@ make install         # installs to $GOBIN
 ## Quick start
 
 ```sh
-# Current spot prices for one SKU, all regions, both OS variants:
-costctl azure spot current --sku Standard_F8s_v2
+# Store your cloudprice.net key once (used for both Azure history + all GCP):
+costctl config set-key cloudprice <YOUR_KEY>
 
-# Same, filtered:
+# Azure current spot prices (no key required for this one):
 costctl azure spot current --sku Standard_F8s_v2 --region westus2 --os linux
 
-# Historical change-points for one (SKU, region):
-costctl config set-key cloudprice <YOUR_KEY>     # one-time
+# Azure ~90-day history:
 costctl azure spot history --sku Standard_F8s_v2 --region westus2
+
+# GCP current spot prices across all regions:
+costctl gcp spot current --machine-type n2-standard-2
+
+# GCP ~90-day history (region is required upstream):
+costctl gcp spot history --machine-type n2-standard-2 --region us-central1
 ```
 
 ## Configuration
@@ -68,7 +74,11 @@ costctl
 ├── azure
 │   └── spot
 │       ├── current   — Azure Retail Prices (no key required)
-│       └── history   — cloudprice.net (key required)
+│       └── history   — cloudprice.net AzurePrice v1 (key required)
+├── gcp
+│   └── spot
+│       ├── current   — cloudprice.net CloudPrice v2 (key required)
+│       └── history   — cloudprice.net CloudPrice v2 (key required)
 └── config
     ├── set-key <provider> <key>
     ├── show

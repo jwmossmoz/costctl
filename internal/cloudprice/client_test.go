@@ -5,6 +5,7 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 )
 
@@ -86,5 +87,77 @@ func TestPriceHistory_RejectsEmptyInput(t *testing.T) {
 	c2 := New("")
 	if _, err := c2.PriceHistory(context.Background(), "X", "westus2", "spot"); err == nil {
 		t.Error("expected error for empty key, got nil")
+	}
+}
+
+func TestGCPHistory_ParsesResponseAndPassesParams(t *testing.T) {
+	var gotPath, gotQuery string
+	c, _ := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
+		gotPath = r.URL.Path
+		gotQuery = r.URL.RawQuery
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{
+			"Status":"ok",
+			"Data":{
+				"Currency":"USD","Region":"us-central1","OSandSoftware":"Linux",
+				"StartDate":"20260211","EndDate":"20260511",
+				"Items":[
+					{"Region":"us-central1","InstanceType":"n2-standard-2",
+					 "CreatedYYYYMMDD":20260211,"PriceSpot":0.030,"PriceOnDemand":0.097}
+				]
+			}
+		}`))
+	})
+
+	resp, err := c.GCPHistory(context.Background(), "n2-standard-2", "us-central1", "20260211")
+	if err != nil {
+		t.Fatalf("GCPHistory: %v", err)
+	}
+	if gotPath != "/api/v2/gcp/compute/instances/n2-standard-2/history" {
+		t.Errorf("path = %q", gotPath)
+	}
+	for _, want := range []string{"region=us-central1", "startDate=20260211", "subscription-key=test-key"} {
+		if !strings.Contains(gotQuery, want) {
+			t.Errorf("query missing %q; got %q", want, gotQuery)
+		}
+	}
+	if resp.Data.Region != "us-central1" || len(resp.Data.Items) != 1 {
+		t.Errorf("response mis-parsed: %+v", resp.Data)
+	}
+	if resp.Data.Items[0].PriceSpot != 0.030 {
+		t.Errorf("PriceSpot = %v", resp.Data.Items[0].PriceSpot)
+	}
+}
+
+func TestGCPCurrent_ParsesResponse(t *testing.T) {
+	c, _ := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{
+			"Status":"ok",
+			"Data":{
+				"Currency":"USD","OSandSoftware":"Linux","UpdatedAt":"2026-05-11 03:02:39",
+				"Prices":[
+					{"Region":"us-central1","InstanceType":"n2-standard-2","PriceSpot":0.030,"PriceOnDemand":0.097},
+					{"Region":"us-east1","InstanceType":"n2-standard-2","PriceSpot":0.029,"PriceOnDemand":0.097}
+				]
+			}
+		}`))
+	})
+
+	resp, err := c.GCPCurrent(context.Background(), "n2-standard-2")
+	if err != nil {
+		t.Fatalf("GCPCurrent: %v", err)
+	}
+	if len(resp.Data.Prices) != 2 || resp.Data.Prices[0].Region != "us-central1" {
+		t.Errorf("prices mis-parsed: %+v", resp.Data.Prices)
+	}
+}
+
+func TestGCPHistory_RejectsEmptyInput(t *testing.T) {
+	if _, err := New("k").GCPHistory(context.Background(), "", "us-central1", ""); err == nil {
+		t.Error("expected error for empty machineType")
+	}
+	if _, err := New("").GCPHistory(context.Background(), "x", "us-central1", ""); err == nil {
+		t.Error("expected error for empty key")
 	}
 }
