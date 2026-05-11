@@ -4,12 +4,26 @@ package cmd
 import (
 	"fmt"
 	"os"
+	"runtime/debug"
 
 	"github.com/spf13/cobra"
 )
 
-// Version is set via -ldflags at build time. Defaults to "dev" for local builds.
+// Version is set via -ldflags at build time (Makefile / goreleaser). When the
+// binary is produced by plain `go install`, ldflags don't run; in that case we
+// fall back to the module version embedded by the Go toolchain.
 var Version = "dev"
+
+func resolveVersion() string {
+	if Version != "dev" {
+		return Version
+	}
+	info, ok := debug.ReadBuildInfo()
+	if !ok || info.Main.Version == "" || info.Main.Version == "(devel)" {
+		return Version
+	}
+	return info.Main.Version
+}
 
 // Global flags accessible from subcommands.
 var (
@@ -47,6 +61,6 @@ func init() {
 	rootCmd.PersistentFlags().BoolVarP(&flagVerbose, "verbose", "v", false, "show extra diagnostics on stderr")
 	rootCmd.PersistentFlags().BoolVarP(&flagQuiet, "quiet", "q", false, "suppress progress on stderr")
 	rootCmd.PersistentFlags().BoolVar(&flagNoColor, "no-color", false, "disable color output (also honors NO_COLOR)")
-	rootCmd.Version = Version
+	rootCmd.Version = resolveVersion()
 	rootCmd.SetVersionTemplate("costctl {{.Version}}\n")
 }
