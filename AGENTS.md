@@ -100,6 +100,20 @@ Capturing what we learned the hard way so future agents don't have to retrace.
    constant. Do not invent a new resolution path.
 4. Update `README.md` and the command tree at the top of this file.
 
+## Homebrew tap
+
+`brew install jwmossmoz/tap/costctl` is wired up via the `brews:` block in
+`.goreleaser.yml`. On every `v*` tag push, goreleaser commits an updated
+Formula to `jwmossmoz/homebrew-tap`. The cross-repo write needs a PAT with
+`contents: write` on the tap repo, stored as the `HOMEBREW_TAP_TOKEN` secret on
+this repo (the default `GITHUB_TOKEN` can't write to other repos).
+
+goreleaser emits a deprecation warning that `brews` is being phased out in
+favor of `homebrew_casks`. **Don't switch yet.** Casks set macOS quarantine
+attributes on downloaded binaries, which would block unsigned binaries at
+runtime. Switching requires notarization (Apple Developer ID + `notarytool`)
+— if/when we invest in that, swap `brews:` for `homebrew_casks:`.
+
 ## Things we intentionally did NOT do
 
 - **No concurrent fetches.** History queries are sequential because cloudprice

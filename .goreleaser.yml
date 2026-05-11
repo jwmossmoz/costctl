@@ -56,3 +56,24 @@ changelog:
 release:
   draft: false
   prerelease: auto
+
+brews:
+  - name: costctl
+    repository:
+      owner: jwmossmoz
+      name: homebrew-tap
+      branch: main
+      token: "{{ .Env.HOMEBREW_TAP_TOKEN }}"
+    directory: Formula
+    homepage: "https://github.com/jwmossmoz/costctl"
+    description: "Multi-cloud cost and pricing CLI (Azure spot prices today)"
+    license: "MIT"
+    commit_author:
+      name: goreleaser-bot
+      email: bot@goreleaser.com
+    commit_msg_template: "Brew formula update for {{ .ProjectName }} version {{ .Tag }}"
+    install: |
+      bin.install "costctl"
+    test: |
+      assert_match "costctl", shell_output("#{bin}/costctl --version")
+    skip_upload: auto

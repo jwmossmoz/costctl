@@ -7,11 +7,22 @@ Multi-cloud cost and pricing CLI. Today: Azure VM spot pricing (current + ~90 da
 
 ## Install
 
+Homebrew (macOS / Linux):
+
+```sh
+brew install jwmossmoz/tap/costctl
+```
+
+Go toolchain:
+
 ```sh
 go install github.com/jwmossmoz/costctl@latest
 ```
 
-Or from a checkout:
+Prebuilt binaries for Linux / macOS / Windows are attached to each
+[release](https://github.com/jwmossmoz/costctl/releases).
+
+From a checkout:
 
 ```sh
 make build           # produces ./costctl
