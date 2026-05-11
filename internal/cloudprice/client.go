@@ -13,6 +13,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"strconv"
 	"time"
 )
 
@@ -22,6 +23,13 @@ const (
 
 	defaultUserAgent = "costctl (https://github.com/jwmossmoz/costctl)"
 	defaultTimeout   = 30 * time.Second
+
+	// Retry knobs for HTTP 429 responses. Cloudprice returns 429 under modest
+	// concurrent load (~6 parallel requests is enough to trip it). Defaults
+	// recover transparently for typical batch workloads.
+	defaultMaxRetries  = 4
+	defaultBaseBackoff = 500 * time.Millisecond
+	defaultMaxBackoff  = 10 * time.Second
 )
 
 // Errors surfaced by the client.
@@ -36,16 +44,75 @@ type Client struct {
 	APIKey     string
 	HTTPClient *http.Client
 	UserAgent  string
+
+	// MaxRetries on HTTP 429. 0 means "use default" (defaultMaxRetries).
+	// Set to -1 to disable retries entirely.
+	MaxRetries int
+	// BaseBackoff is the initial wait before a retry; doubles each attempt.
+	// 0 means "use default" (defaultBaseBackoff).
+	BaseBackoff time.Duration
+	// MaxBackoff caps the exponential growth. 0 means "use default"
+	// (defaultMaxBackoff). Honored Retry-After headers can still exceed this.
+	MaxBackoff time.Duration
+
+	// UseCache enables transparent on-disk caching of 200 responses.
+	UseCache bool
+	// CacheTTL is the freshness window. 0 means use DefaultCacheTTL.
+	CacheTTL time.Duration
+	// CacheDir overrides the default $XDG_CACHE_HOME/costctl path.
+	CacheDir string
 }
 
-// New returns a Client wired with sensible defaults.
+// New returns a Client wired with sensible defaults. Cache is enabled with
+// the 24-hour DefaultCacheTTL — cloudprice updates daily, so this is safe.
 func New(apiKey string) *Client {
 	return &Client{
 		BaseURL:    DefaultBaseURL,
 		APIKey:     apiKey,
 		HTTPClient: &http.Client{Timeout: defaultTimeout},
 		UserAgent:  defaultUserAgent,
+		UseCache:   true,
+		CacheTTL:   DefaultCacheTTL,
 	}
+}
+
+func (c *Client) maxRetries() int {
+	if c.MaxRetries == 0 {
+		return defaultMaxRetries
+	}
+	if c.MaxRetries < 0 {
+		return 0
+	}
+	return c.MaxRetries
+}
+
+func (c *Client) baseBackoff() time.Duration {
+	if c.BaseBackoff <= 0 {
+		return defaultBaseBackoff
+	}
+	return c.BaseBackoff
+}
+
+func (c *Client) maxBackoff() time.Duration {
+	if c.MaxBackoff <= 0 {
+		return defaultMaxBackoff
+	}
+	return c.MaxBackoff
+}
+
+// backoffFor returns the wait time for the given retry attempt (0-indexed),
+// preferring an upstream Retry-After header when present.
+func (c *Client) backoffFor(attempt int, retryAfter string) time.Duration {
+	if retryAfter != "" {
+		if secs, err := strconv.Atoi(retryAfter); err == nil && secs > 0 {
+			return time.Duration(secs) * time.Second
+		}
+	}
+	d := c.baseBackoff() << attempt
+	if d > c.maxBackoff() {
+		d = c.maxBackoff()
+	}
+	return d
 }
 
 // HistoryItem is one row of price history.
@@ -93,35 +160,9 @@ func (c *Client) PriceHistory(ctx context.Context, sku, region, tier string) (*H
 	q.Set("subscription-key", c.APIKey)
 
 	endpoint := c.BaseURL + "/api/v1/price_history_vm?" + q.Encode()
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)
-	if err != nil {
-		return nil, err
-	}
-	req.Header.Set("Accept", "application/json")
-	req.Header.Set("User-Agent", c.UserAgent)
-
-	resp, err := c.HTTPClient.Do(req)
-	if err != nil {
-		return nil, fmt.Errorf("cloudprice: GET price_history_vm: %w", err)
-	}
-	defer resp.Body.Close()
-
-	body, _ := io.ReadAll(resp.Body)
-	switch resp.StatusCode {
-	case http.StatusOK:
-		// fall through
-	case http.StatusUnauthorized:
-		return nil, ErrUnauthorized
-	case http.StatusNotFound:
-		return nil, ErrNotFound
-	default:
-		return nil, fmt.Errorf("cloudprice: GET price_history_vm: %s: %s",
-			resp.Status, truncate(string(body), 200))
-	}
-
 	var out HistoryResponse
-	if err := json.Unmarshal(body, &out); err != nil {
-		return nil, fmt.Errorf("cloudprice: decoding response: %w", err)
+	if err := c.doJSON(ctx, endpoint, &out); err != nil {
+		return nil, err
 	}
 	return &out, nil
 }
@@ -228,37 +269,69 @@ func (c *Client) GCPCurrent(ctx context.Context, machineType string) (*GCPCurren
 	return &out, nil
 }
 
-// doJSON executes a GET, maps status codes, and decodes JSON into v.
+// doJSON executes a GET, consults the disk cache, maps status codes, retries
+// 429s with backoff, and decodes JSON into v.
 func (c *Client) doJSON(ctx context.Context, endpoint string, v any) error {
+	if body, status, ok := c.readCache(endpoint); ok && status == http.StatusOK {
+		if err := json.Unmarshal(body, v); err != nil {
+			return fmt.Errorf("cloudprice: decoding cached response: %w", err)
+		}
+		return nil
+	}
+
+	maxRetries := c.maxRetries()
+	for attempt := 0; ; attempt++ {
+		body, status, retryAfter, err := c.doOnce(ctx, endpoint)
+		if err != nil {
+			return err
+		}
+		switch status {
+		case http.StatusOK:
+			c.writeCache(endpoint, status, body)
+			if err := json.Unmarshal(body, v); err != nil {
+				return fmt.Errorf("cloudprice: decoding response: %w", err)
+			}
+			return nil
+		case http.StatusUnauthorized:
+			return ErrUnauthorized
+		case http.StatusNotFound:
+			return ErrNotFound
+		case http.StatusTooManyRequests:
+			if attempt >= maxRetries {
+				return fmt.Errorf("cloudprice: 429 Too Many Requests after %d retries: %s",
+					maxRetries, truncate(string(body), 200))
+			}
+			wait := c.backoffFor(attempt, retryAfter)
+			select {
+			case <-ctx.Done():
+				return ctx.Err()
+			case <-time.After(wait):
+			}
+			continue
+		default:
+			return fmt.Errorf("cloudprice: GET: HTTP %d: %s",
+				status, truncate(string(body), 200))
+		}
+	}
+}
+
+// doOnce performs one GET and returns (body, status, retryAfter, err).
+// Caller decides retry policy.
+func (c *Client) doOnce(ctx context.Context, endpoint string) ([]byte, int, string, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)
 	if err != nil {
-		return err
+		return nil, 0, "", err
 	}
 	req.Header.Set("Accept", "application/json")
 	req.Header.Set("User-Agent", c.UserAgent)
 
 	resp, err := c.HTTPClient.Do(req)
 	if err != nil {
-		return fmt.Errorf("cloudprice: GET: %w", err)
+		return nil, 0, "", fmt.Errorf("cloudprice: GET: %w", err)
 	}
 	defer resp.Body.Close()
-
 	body, _ := io.ReadAll(resp.Body)
-	switch resp.StatusCode {
-	case http.StatusOK:
-		// fall through
-	case http.StatusUnauthorized:
-		return ErrUnauthorized
-	case http.StatusNotFound:
-		return ErrNotFound
-	default:
-		return fmt.Errorf("cloudprice: GET: %s: %s",
-			resp.Status, truncate(string(body), 200))
-	}
-	if err := json.Unmarshal(body, v); err != nil {
-		return fmt.Errorf("cloudprice: decoding response: %w", err)
-	}
-	return nil
+	return body, resp.StatusCode, resp.Header.Get("Retry-After"), nil
 }
 
 func truncate(s string, n int) string {

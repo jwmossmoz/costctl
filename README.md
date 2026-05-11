@@ -79,13 +79,27 @@ costctl
 │   └── spot
 │       ├── current   — cloudprice.net CloudPrice v2 (key required)
 │       └── history   — cloudprice.net CloudPrice v2 (key required)
+├── cache
+│   ├── show          — print cache path + size
+│   └── clear         — drop all cached responses
 └── config
     ├── set-key <provider> <key>
     ├── show
     └── path
 ```
 
-Global flags: `--json`, `-v/--verbose`, `-q/--quiet`, `--no-color`, `--version`, `-h/--help`.
+Global flags: `--json`, `-v/--verbose`, `-q/--quiet`, `--no-color`, `--no-cache`, `--cache-ttl 24h`, `--version`, `-h/--help`.
+
+## Caching
+
+Successful cloudprice responses are cached on disk at
+`$XDG_CACHE_HOME/costctl/` (default `~/.cache/costctl/`) for 24h by default
+— cloudprice itself updates once a day, so this is safe.
+Override with `--cache-ttl 1h`, bypass for one run with `--no-cache`, or set
+`COSTCTL_CACHE_DIR=<path>` to relocate.
+
+429 rate-limit responses are retried transparently with exponential backoff
+and respect the `Retry-After` header.
 
 ## Examples
 

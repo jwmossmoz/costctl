@@ -11,7 +11,6 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/jwmossmoz/costctl/internal/azureretail"
-	"github.com/jwmossmoz/costctl/internal/cloudprice"
 	cfg "github.com/jwmossmoz/costctl/internal/config"
 )
 
@@ -122,7 +121,7 @@ func runAzureSpotHistory(cmd *cobra.Command, args []string) error {
 	}
 
 	progress("fetching cloudprice history for %s in %s ...", flagSKU, regionLabel(flagRegion))
-	client := cloudprice.New(key)
+	client := newCloudpriceClient(key)
 	resp, err := client.PriceHistory(ctx, flagSKU, flagRegion, flagTier)
 	if err != nil {
 		return err

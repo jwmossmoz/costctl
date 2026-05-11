@@ -115,6 +115,23 @@ Capturing what we learned the hard way so future agents don't have to retrace.
    constant. Do not invent a new resolution path.
 4. Update `README.md` and the command tree at the top of this file.
 
+## HTTP behavior (retry + cache)
+
+The cloudprice client retries 429 responses transparently. Defaults: up to 4
+attempts, base backoff 500ms doubling each try (capped at 10s), Retry-After
+header honored when present. This was added in v0.3.1 after the FXCI dashboard
+script hit rate limits at concurrency 6. Tune via `Client.MaxRetries` /
+`BaseBackoff` / `MaxBackoff` if you ever embed the package directly.
+
+The client also caches successful (200) responses on disk at
+`$XDG_CACHE_HOME/costctl/<sha256>.json` (default `~/.cache/costctl/`).
+Default TTL is 24 hours since cloudprice updates daily. CLI flags:
+`--no-cache` disables for one run, `--cache-ttl 6h` shortens the window.
+`costctl cache show` prints the path + size; `costctl cache clear` empties it.
+
+If you add a new endpoint to the client, route it through `doJSON` (not a
+hand-rolled `http.Client.Do`) so both behaviors apply automatically.
+
 ## Homebrew tap
 
 `brew install jwmossmoz/tap/costctl` is wired up via the `brews:` block in
