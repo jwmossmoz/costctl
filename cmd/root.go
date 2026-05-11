@@ -2,12 +2,15 @@
 package cmd
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"runtime/debug"
+	"strings"
 	"time"
 
 	"github.com/spf13/cobra"
+	"github.com/spf13/pflag"
 
 	"github.com/jwmossmoz/costctl/internal/cloudprice"
 )
@@ -51,9 +54,10 @@ var rootCmd = &cobra.Command{
 	Short: "Multi-cloud cost and pricing CLI",
 	Long: `costctl queries cloud price catalogs for current and historical pricing.
 
-The current command set covers Azure VM spot pricing:
-  - Current prices via the Azure Retail Prices API (unauthenticated)
-  - ~90 days of history via cloudprice.net (needs a subscription key)
+The current command set covers Azure and GCP spot pricing:
+  - Azure current prices via the Azure Retail Prices API (unauthenticated)
+  - Azure and GCP history via cloudprice.net (needs a subscription key)
+  - GCP current prices via cloudprice.net
 
 Get a cloudprice.net key at https://developer.cloudprice.net/ and store it with:
   costctl config set-key cloudprice <KEY>`,
@@ -63,10 +67,59 @@ Get a cloudprice.net key at https://developer.cloudprice.net/ and store it with:
 
 // Execute is the package entrypoint called from main.
 func Execute() {
+	os.Exit(execute(os.Args[1:]))
+}
+
+func execute(args []string) int {
+	rootCmd.SetArgs(args)
 	if err := rootCmd.Execute(); err != nil {
 		fmt.Fprintln(os.Stderr, "error:", err)
-		os.Exit(1)
+		return exitCodeForError(err)
 	}
+	return 0
+}
+
+type usageError struct {
+	err error
+}
+
+func (e usageError) Error() string {
+	return e.err.Error()
+}
+
+func (e usageError) Unwrap() error {
+	return e.err
+}
+
+func usageErrorf(format string, args ...any) error {
+	return usageError{err: fmt.Errorf(format, args...)}
+}
+
+func exitCodeForError(err error) int {
+	if err == nil {
+		return 0
+	}
+	var u usageError
+	if errors.As(err, &u) || errors.Is(err, pflag.ErrHelp) || looksLikeUsageError(err) {
+		return 2
+	}
+	return 1
+}
+
+func looksLikeUsageError(err error) bool {
+	msg := err.Error()
+	prefixes := []string{
+		"unknown command ",
+		"unknown flag:",
+		"unknown shorthand flag:",
+		"required flag(s) ",
+	}
+	for _, prefix := range prefixes {
+		if strings.HasPrefix(msg, prefix) {
+			return true
+		}
+	}
+	return strings.HasPrefix(msg, "accepts ") && strings.Contains(msg, " arg(s), received ")
 }
 
 func init() {
@@ -77,6 +130,9 @@ func init() {
 	rootCmd.PersistentFlags().BoolVar(&flagNoCache, "no-cache", false, "disable on-disk response cache for this run")
 	rootCmd.PersistentFlags().DurationVar(&flagCacheTTL, "cache-ttl", cloudprice.DefaultCacheTTL,
 		"response cache freshness window")
+	rootCmd.SetFlagErrorFunc(func(cmd *cobra.Command, err error) error {
+		return usageError{err: err}
+	})
 	rootCmd.Version = resolveVersion()
 	rootCmd.SetVersionTemplate("costctl {{.Version}}\n")
 }

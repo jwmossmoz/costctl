@@ -67,7 +67,10 @@ func init() {
 }
 
 func requireCloudpriceKey(flagVal string) (string, error) {
-	key, source := cfg.ResolveAPIKey(cfg.ProviderCloudprice, flagVal, envCloudpriceKey)
+	key, source, err := cfg.ResolveAPIKey(cfg.ProviderCloudprice, flagVal, envCloudpriceKey)
+	if err != nil {
+		return "", err
+	}
 	if key == "" {
 		return "", fmt.Errorf("no cloudprice.net key found. Pass --api-key, set %s, "+
 			"or run: costctl config set-key cloudprice <KEY>", envCloudpriceKey)
@@ -82,6 +85,9 @@ func runGCPSpotCurrent(cmd *cobra.Command, args []string) error {
 	ctx := cmd.Context()
 	if ctx == nil {
 		ctx = context.Background()
+	}
+	if err := validateGCPSpotCurrentFlags(); err != nil {
+		return err
 	}
 	key, err := requireCloudpriceKey(flagGCPAPIKey)
 	if err != nil {
@@ -129,17 +135,14 @@ func runGCPSpotHistory(cmd *cobra.Command, args []string) error {
 	if ctx == nil {
 		ctx = context.Background()
 	}
-	if flagGCPRegion == "" {
-		return fmt.Errorf("--region is required for history (upstream requires it)")
+	if err := validateGCPSpotHistoryFlags(); err != nil {
+		return err
 	}
 	key, err := requireCloudpriceKey(flagGCPAPIKey)
 	if err != nil {
 		return err
 	}
 
-	if flagDays < 1 {
-		flagDays = 90
-	}
 	startDate := time.Now().AddDate(0, 0, -flagDays).Format("20060102")
 
 	progress("fetching GCP history for %s in %s since %s ...",
@@ -168,6 +171,28 @@ func runGCPSpotHistory(cmd *cobra.Command, args []string) error {
 	for _, it := range items {
 		fmt.Printf("%-22s %-12.4f %-12.4f %-12.4f %-12.4f\n",
 			it.CreatedDateTime, it.PriceSpot, it.PriceOnDemand, it.PriceCommit1Yr, it.PriceCommit3Yr)
+	}
+	return nil
+}
+
+func validateGCPSpotCurrentFlags() error {
+	flagMachine = strings.TrimSpace(flagMachine)
+	flagGCPRegion = strings.TrimSpace(flagGCPRegion)
+	if flagMachine == "" {
+		return usageErrorf("--machine-type is required")
+	}
+	return nil
+}
+
+func validateGCPSpotHistoryFlags() error {
+	if err := validateGCPSpotCurrentFlags(); err != nil {
+		return err
+	}
+	if strings.TrimSpace(flagGCPRegion) == "" {
+		return usageErrorf("--region is required for history")
+	}
+	if flagDays < 1 || flagDays > 90 {
+		return usageErrorf("--days must be between 1 and 90")
 	}
 	return nil
 }

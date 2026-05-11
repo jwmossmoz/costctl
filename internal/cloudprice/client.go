@@ -330,7 +330,11 @@ func (c *Client) doOnce(ctx context.Context, endpoint string) ([]byte, int, stri
 		return nil, 0, "", fmt.Errorf("cloudprice: GET: %w", err)
 	}
 	defer resp.Body.Close()
-	body, _ := io.ReadAll(resp.Body)
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, resp.StatusCode, resp.Header.Get("Retry-After"),
+			fmt.Errorf("cloudprice: reading response body: %w", err)
+	}
 	return body, resp.StatusCode, resp.Header.Get("Retry-After"), nil
 }
 

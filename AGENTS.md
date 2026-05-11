@@ -5,10 +5,11 @@ Read it before making changes.
 
 ## What this is
 
-A small Go CLI that wraps cloud price catalogs. Today it handles Azure VM spot
-pricing — current snapshots from the Azure Retail Prices API and ~90-day history
-from cloudprice.net. The package layout assumes more clouds (AWS, GCP) will land
-later as siblings of the `azure` command tree.
+A small Go CLI that wraps cloud price catalogs. Today it handles Azure and GCP
+spot pricing — Azure current snapshots from the Azure Retail Prices API, and
+Azure/GCP cloudprice.net current or historical data where no native public
+history source is available. The package layout assumes more clouds (AWS, etc.)
+will land later as siblings of the existing cloud command trees.
 
 ## Layout
 
@@ -18,9 +19,11 @@ cmd/                         # cobra command tree
   root.go                    # rootCmd + persistent global flags
   config.go                  # `costctl config ...`
   azure.go                   # `costctl azure spot {current,history}`
+  gcp.go                     # `costctl gcp spot {current,history}`
+  cache.go                   # `costctl cache ...`
 internal/
   config/                    # JSON config loader (XDG path, 0600 perms)
-  cloudprice/                # client for data.cloudprice.net/api/v1/...
+  cloudprice/                # client for data.cloudprice.net/api/v1 and v2
   azureretail/               # client for prices.azure.com/api/retail/prices
 ```
 
@@ -151,7 +154,8 @@ runtime. Switching requires notarization (Apple Developer ID + `notarytool`)
 - **No concurrent fetches.** History queries are sequential because cloudprice
   has no documented rate limit and the data volume is small. If we later need
   parallelism, add it behind a `--concurrency` flag — don't make it the default.
-- **No on-disk caching.** Prices change daily; staleness would surprise users.
+- **No unbounded staleness.** On-disk caching is limited by the default 24h TTL
+  and can be bypassed with `--no-cache`.
 - **No `viper`.** The config is small and JSON is sufficient. Adding viper would
   pull in YAML/TOML/etcd dependencies for no gain.
 - **No third-party color libs.** If we add color later, gate it on

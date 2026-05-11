@@ -75,8 +75,19 @@ func Save(c *Config) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+	dir := filepath.Dir(path)
+	_, statErr := os.Stat(dir)
+	dirExisted := statErr == nil
+	if statErr != nil && !errors.Is(statErr, fs.ErrNotExist) {
+		return path, fmt.Errorf("checking config dir: %w", statErr)
+	}
+	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return path, fmt.Errorf("creating config dir: %w", err)
+	}
+	if !dirExisted || os.Getenv("COSTCTL_CONFIG") == "" {
+		if err := os.Chmod(dir, 0o700); err != nil {
+			return path, fmt.Errorf("setting permissions on config dir: %w", err)
+		}
 	}
 	b, err := json.MarshalIndent(c, "", "  ")
 	if err != nil {
@@ -84,6 +95,9 @@ func Save(c *Config) (string, error) {
 	}
 	if err := os.WriteFile(path, append(b, '\n'), 0o600); err != nil {
 		return path, fmt.Errorf("writing %s: %w", path, err)
+	}
+	if err := os.Chmod(path, 0o600); err != nil {
+		return path, fmt.Errorf("setting permissions on %s: %w", path, err)
 	}
 	return path, nil
 }
@@ -102,18 +116,19 @@ func SetKey(provider, key string) (string, error) {
 
 // ResolveAPIKey returns the API key for a provider with precedence
 // flag > env > config file. Pass flagValue="" if no --api-key was set.
-func ResolveAPIKey(provider, flagValue, envVar string) (key, source string) {
+func ResolveAPIKey(provider, flagValue, envVar string) (key, source string, err error) {
 	if flagValue != "" {
-		return flagValue, "flag"
+		return flagValue, "flag", nil
 	}
 	if v := os.Getenv(envVar); v != "" {
-		return v, "env:" + envVar
+		return v, "env:" + envVar, nil
 	}
 	c, _, err := Load()
-	if err == nil {
-		if v := c.Providers[provider].APIKey; v != "" {
-			return v, "config"
-		}
+	if err != nil {
+		return "", "", fmt.Errorf("loading config: %w", err)
 	}
-	return "", ""
+	if v := c.Providers[provider].APIKey; v != "" {
+		return v, "config", nil
+	}
+	return "", "", nil
 }
