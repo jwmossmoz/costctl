@@ -20,11 +20,13 @@ cmd/                         # cobra command tree
   config.go                  # `costctl config ...`
   azure.go                   # `costctl azure spot {current,history}`
   gcp.go                     # `costctl gcp spot {current,history}`
+  worker_pool.go             # `costctl worker-pool` from tc-admin JSON
   cache.go                   # `costctl cache ...`
 internal/
   config/                    # JSON config loader (XDG path, 0600 perms)
   cloudprice/                # client for data.cloudprice.net/api/v1 and v2
   azureretail/               # client for prices.azure.com/api/retail/prices
+  tcadmin/                   # parser for tc-admin generated WorkerPool JSON
 ```
 
 Keep `internal/` packages free of cobra and any CLI concerns — they are plain
@@ -51,6 +53,9 @@ Go 1.22+ is required. The `Makefile` injects `cmd.Version` via `-ldflags`.
 - Exit codes: `0` success, `1` runtime error, `2` invalid usage (cobra-enforced).
 - Use cobra's `Example:` field with a multi-line `strings.TrimSpace(...)` block
   rather than ad-hoc `Long:` examples.
+- `costctl worker-pool` should consume tc-admin generated JSON from stdin or
+  `--from`; do not recreate fxci-config worker-pool data in a costctl-specific
+  config file.
 
 ## API key handling
 

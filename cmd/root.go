@@ -58,6 +58,7 @@ The current command set covers Azure and GCP spot pricing:
   - Azure current prices via the Azure Retail Prices API (unauthenticated)
   - Azure and GCP history via cloudprice.net (needs a subscription key)
   - GCP current prices via cloudprice.net
+  - Worker-pool lookups from tc-admin generated JSON
 
 Get a cloudprice.net key at https://developer.cloudprice.net/ and store it with:
   costctl config set-key cloudprice <KEY>`,
