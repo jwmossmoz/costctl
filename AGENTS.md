@@ -20,11 +20,13 @@ cmd/                         # cobra command tree
   config.go                  # `costctl config ...`
   azure.go                   # `costctl azure spot {current,history}`
   gcp.go                     # `costctl gcp spot {current,history}`
+  worker_pool.go             # `costctl worker-pool` from tc-admin JSON
   cache.go                   # `costctl cache ...`
 internal/
   config/                    # JSON config loader (XDG path, 0600 perms)
   cloudprice/                # client for data.cloudprice.net/api/v1 and v2
   azureretail/               # client for prices.azure.com/api/retail/prices
+  tcadmin/                   # parser for tc-admin generated WorkerPool JSON
 ```
 
 Keep `internal/` packages free of cobra and any CLI concerns — they are plain
@@ -51,6 +53,9 @@ Go 1.22+ is required. The `Makefile` injects `cmd.Version` via `-ldflags`.
 - Exit codes: `0` success, `1` runtime error, `2` invalid usage (cobra-enforced).
 - Use cobra's `Example:` field with a multi-line `strings.TrimSpace(...)` block
   rather than ad-hoc `Long:` examples.
+- `costctl worker-pool` should consume tc-admin generated JSON from stdin or
+  `--from`; do not recreate fxci-config worker-pool data in a costctl-specific
+  config file.
 
 ## API key handling
 
@@ -109,6 +114,9 @@ Capturing what we learned the hard way so future agents don't have to retrace.
   distinguished by `productName` ("... Windows" suffix on the Windows variant).
 - Pagination: each page has up to 1000 items and a `NextPageLink`. The client
   follows the link until empty.
+- 429 throttling is transient and should be retried. Honor
+  `x-ms-ratelimit-microsoft.consumption-retry-after` first, then `Retry-After`,
+  then exponential backoff. 503 is also retryable via `Retry-After`.
 
 ## Adding a new cloud
 
@@ -120,11 +128,12 @@ Capturing what we learned the hard way so future agents don't have to retrace.
 
 ## HTTP behavior (retry + cache)
 
-The cloudprice client retries 429 responses transparently. Defaults: up to 4
-attempts, base backoff 500ms doubling each try (capped at 10s), Retry-After
-header honored when present. This was added in v0.3.1 after the FXCI dashboard
-script hit rate limits at concurrency 6. Tune via `Client.MaxRetries` /
-`BaseBackoff` / `MaxBackoff` if you ever embed the package directly.
+The cloudprice client retries 429 responses transparently. The Azure Retail
+client retries 429 and 503 responses transparently. Defaults: up to 4 attempts,
+base backoff 500ms doubling each try (capped at 10s), upstream retry headers
+honored when present. This was added after the FXCI dashboard script and manual
+lookups hit rate limits. Tune via `Client.MaxRetries` / `BaseBackoff` /
+`MaxBackoff` if you ever embed either package directly.
 
 The client also caches successful (200) responses on disk at
 `$XDG_CACHE_HOME/costctl/<sha256>.json` (default `~/.cache/costctl/`).

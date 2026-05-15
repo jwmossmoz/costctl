@@ -47,6 +47,10 @@ costctl gcp spot current --machine-type n2-standard-2
 
 # GCP ~90-day history (region is required upstream):
 costctl gcp spot history --machine-type n2-standard-2 --region us-central1
+
+# Worker pool prices from fxci-config / tc-admin output:
+uv run python tc-admin.py generate --environment=firefoxci --resources worker_pools \
+  --grep 'gecko-t/win11-64-25h2-amd' --json | costctl worker-pool
 ```
 
 ## Configuration
@@ -82,6 +86,7 @@ costctl
 ├── cache
 │   ├── show          — print cache path + size
 │   └── clear         — drop all cached responses
+├── worker-pool       — current prices for a tc-admin generated worker pool
 └── config
     ├── set-key <provider> <key>
     ├── show
@@ -98,8 +103,10 @@ Successful cloudprice responses are cached on disk at
 Override with `--cache-ttl 1h`, bypass for one run with `--no-cache`, or set
 `COSTCTL_CACHE_DIR=<path>` to relocate.
 
-429 rate-limit responses are retried transparently with exponential backoff
-and respect the `Retry-After` header.
+429 rate-limit responses are retried transparently with exponential backoff.
+CloudPrice retries honor `Retry-After`; Azure Retail retries honor
+`x-ms-ratelimit-microsoft.consumption-retry-after` and `Retry-After`. Azure
+Retail 503 responses are retried the same way.
 
 ## Examples
 
@@ -115,7 +122,23 @@ costctl azure spot history --sku Standard_E8ads_v6 --region eastus2 --os windows
 
 # Pipe-friendly: feed several SKUs from a file
 xargs -I {} costctl azure spot history --sku {} --region westus2 --json < skus.txt
+
+# Use fxci-config as the worker-pool source of truth:
+uv run python tc-admin.py generate --environment=firefoxci --resources worker_pools \
+  --grep 'gecko-t/win11-64-25h2-amd' --json | costctl worker-pool --configured-only
+
+# Or generate once and select a pool from a larger tc-admin JSON file:
+costctl worker-pool gecko-t/win11-64-25h2-amd --from /tmp/worker-pools.json --json
 ```
+
+`worker-pool` reads tc-admin generated JSON from stdin by default. For Azure
+worker pools it extracts `armDeployment.parameters.vmSize` and `location`, then
+queries Azure Retail current spot prices across all available regions. For GCP
+worker pools it extracts the generated Compute Engine `machineType` and `region`,
+then queries cloudprice.net current prices across all available regions. The
+configured worker-pool regions are marked in the output; add `--configured-only`
+to show just those regions. Azure `--os` defaults to `any` because some FXCI
+Windows ARM pools do not have Windows-labelled Retail Prices meters.
 
 ## Exit codes
 

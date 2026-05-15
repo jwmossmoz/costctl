@@ -6,7 +6,9 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync/atomic"
 	"testing"
+	"time"
 )
 
 func TestSpotPrices_BuildsFilterAndParsesItems(t *testing.T) {
@@ -83,5 +85,82 @@ func TestSpotPrices_NonOKStatusReturnsError(t *testing.T) {
 	c.BaseURL = srv.URL
 	if _, err := c.SpotPrices(context.Background(), "X"); err == nil {
 		t.Error("expected error on 500, got nil")
+	}
+}
+
+func TestSpotPrices_RetriesOn429(t *testing.T) {
+	var hits int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		n := atomic.AddInt32(&hits, 1)
+		if n <= 2 {
+			w.Header().Set("x-ms-ratelimit-microsoft.consumption-retry-after", "0")
+			http.Error(w, "too many requests", http.StatusTooManyRequests)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"Items":[{"armSkuName":"A","retailPrice":0.1}]}`))
+	}))
+	t.Cleanup(srv.Close)
+
+	c := New()
+	c.BaseURL = srv.URL
+	c.BaseBackoff = time.Millisecond
+
+	items, err := c.SpotPrices(context.Background(), "X")
+	if err != nil {
+		t.Fatalf("SpotPrices: %v", err)
+	}
+	if len(items) != 1 || items[0].RetailPrice != 0.1 {
+		t.Fatalf("items mis-parsed after retry: %+v", items)
+	}
+	if got := atomic.LoadInt32(&hits); got != 3 {
+		t.Fatalf("hits = %d, want 3", got)
+	}
+}
+
+func TestSpotPrices_RetriesOn503(t *testing.T) {
+	var hits int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		n := atomic.AddInt32(&hits, 1)
+		if n == 1 {
+			w.Header().Set("Retry-After", "0")
+			http.Error(w, "service unavailable", http.StatusServiceUnavailable)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"Items":[{"armSkuName":"A","retailPrice":0.1}]}`))
+	}))
+	t.Cleanup(srv.Close)
+
+	c := New()
+	c.BaseURL = srv.URL
+	c.BaseBackoff = time.Millisecond
+
+	items, err := c.SpotPrices(context.Background(), "X")
+	if err != nil {
+		t.Fatalf("SpotPrices: %v", err)
+	}
+	if len(items) != 1 {
+		t.Fatalf("items = %+v, want 1 item", items)
+	}
+	if got := atomic.LoadInt32(&hits); got != 2 {
+		t.Fatalf("hits = %d, want 2", got)
+	}
+}
+
+func TestSpotPrices_429ExhaustsAndErrors(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Error(w, "too many requests", http.StatusTooManyRequests)
+	}))
+	t.Cleanup(srv.Close)
+
+	c := New()
+	c.BaseURL = srv.URL
+	c.BaseBackoff = time.Millisecond
+	c.MaxRetries = 2
+
+	_, err := c.SpotPrices(context.Background(), "X")
+	if err == nil || !strings.Contains(err.Error(), "HTTP 429 after 2 retries") {
+		t.Fatalf("expected exhausted 429 error, got %v", err)
 	}
 }
