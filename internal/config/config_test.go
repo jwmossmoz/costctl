@@ -60,6 +60,47 @@ func TestSetKey_RoundTrip(t *testing.T) {
 	}
 }
 
+func TestSetKey_RepairsExistingFilePermissions(t *testing.T) {
+	path := withTempConfig(t)
+	if err := os.WriteFile(path, []byte(`{"providers":{}}`), 0o644); err != nil {
+		t.Fatalf("seed config: %v", err)
+	}
+	if _, err := SetKey("cloudprice", "secret-key-1"); err != nil {
+		t.Fatalf("SetKey: %v", err)
+	}
+	info, err := os.Stat(path)
+	if err != nil {
+		t.Fatalf("stat: %v", err)
+	}
+	if info.Mode().Perm() != 0o600 {
+		t.Errorf("config perms = %o, want 0600", info.Mode().Perm())
+	}
+}
+
+func TestSetKey_RepairsDefaultConfigDirPermissions(t *testing.T) {
+	base := t.TempDir()
+	t.Setenv("COSTCTL_CONFIG", "")
+	t.Setenv("XDG_CONFIG_HOME", base)
+	dir := filepath.Join(base, "costctl")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatalf("seed config dir: %v", err)
+	}
+	if err := os.Chmod(dir, 0o755); err != nil {
+		t.Fatalf("chmod config dir: %v", err)
+	}
+
+	if _, err := SetKey("cloudprice", "secret-key-1"); err != nil {
+		t.Fatalf("SetKey: %v", err)
+	}
+	dirInfo, err := os.Stat(dir)
+	if err != nil {
+		t.Fatalf("stat config dir: %v", err)
+	}
+	if dirInfo.Mode().Perm() != 0o700 {
+		t.Errorf("config dir perms = %o, want 0700", dirInfo.Mode().Perm())
+	}
+}
+
 func TestSetKey_PreservesOtherProviders(t *testing.T) {
 	withTempConfig(t)
 	if _, err := SetKey("cloudprice", "k1"); err != nil {
@@ -98,7 +139,10 @@ func TestResolveAPIKey_Precedence(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			gotKey, gotSrc := ResolveAPIKey("cloudprice", tc.flag, "CLOUDPRICE_API_KEY")
+			gotKey, gotSrc, err := ResolveAPIKey("cloudprice", tc.flag, "CLOUDPRICE_API_KEY")
+			if err != nil {
+				t.Fatalf("ResolveAPIKey: %v", err)
+			}
 			if gotKey != tc.wantKey || gotSrc != tc.wantSrc {
 				t.Errorf("ResolveAPIKey = (%q, %q); want (%q, %q)",
 					gotKey, gotSrc, tc.wantKey, tc.wantSrc)
@@ -108,7 +152,10 @@ func TestResolveAPIKey_Precedence(t *testing.T) {
 
 	t.Run("config wins when flag+env empty", func(t *testing.T) {
 		t.Setenv("CLOUDPRICE_API_KEY", "")
-		gotKey, gotSrc := ResolveAPIKey("cloudprice", "", "CLOUDPRICE_API_KEY")
+		gotKey, gotSrc, err := ResolveAPIKey("cloudprice", "", "CLOUDPRICE_API_KEY")
+		if err != nil {
+			t.Fatalf("ResolveAPIKey: %v", err)
+		}
 		if gotKey != "from-config" || gotSrc != "config" {
 			t.Errorf("ResolveAPIKey = (%q, %q); want (%q, %q)",
 				gotKey, gotSrc, "from-config", "config")
@@ -118,9 +165,23 @@ func TestResolveAPIKey_Precedence(t *testing.T) {
 	t.Run("no key anywhere returns empty", func(t *testing.T) {
 		withTempConfig(t) // fresh dir, nothing in it
 		t.Setenv("CLOUDPRICE_API_KEY", "")
-		gotKey, gotSrc := ResolveAPIKey("cloudprice", "", "CLOUDPRICE_API_KEY")
+		gotKey, gotSrc, err := ResolveAPIKey("cloudprice", "", "CLOUDPRICE_API_KEY")
+		if err != nil {
+			t.Fatalf("ResolveAPIKey: %v", err)
+		}
 		if gotKey != "" || gotSrc != "" {
 			t.Errorf("ResolveAPIKey = (%q, %q); want both empty", gotKey, gotSrc)
 		}
 	})
+}
+
+func TestResolveAPIKey_ReturnsConfigErrors(t *testing.T) {
+	path := withTempConfig(t)
+	if err := os.WriteFile(path, []byte(`{not-json`), 0o600); err != nil {
+		t.Fatalf("seed config: %v", err)
+	}
+	t.Setenv("CLOUDPRICE_API_KEY", "")
+	if _, _, err := ResolveAPIKey("cloudprice", "", "CLOUDPRICE_API_KEY"); err == nil {
+		t.Fatal("expected config parse error, got nil")
+	}
 }

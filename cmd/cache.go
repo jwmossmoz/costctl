@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io/fs"
@@ -24,37 +25,24 @@ Override with COSTCTL_CACHE_DIR=<path>.`,
 var cacheShowCmd = &cobra.Command{
 	Use:   "show",
 	Short: "Print the cache directory path, entry count, and total size",
-	RunE: func(cmd *cobra.Command, args []string) error {
-		dir, err := resolveCacheDir()
-		if err != nil {
-			return err
-		}
-		entries, total, err := summarizeCache(dir)
-		if err != nil {
-			return err
-		}
-		fmt.Printf("path:     %s\n", dir)
-		fmt.Printf("entries:  %d\n", entries)
-		fmt.Printf("bytes:    %d (%.1f KiB)\n", total, float64(total)/1024)
-		return nil
-	},
+	RunE:  runCacheShow,
 }
 
 var cacheClearCmd = &cobra.Command{
 	Use:   "clear",
 	Short: "Delete all cached responses",
-	RunE: func(cmd *cobra.Command, args []string) error {
-		dir, err := resolveCacheDir()
-		if err != nil {
-			return err
-		}
-		removed, err := clearCache(dir)
-		if err != nil {
-			return err
-		}
-		fmt.Fprintf(os.Stderr, "removed %d cache entries from %s\n", removed, dir)
-		return nil
-	},
+	RunE:  runCacheClear,
+}
+
+type cacheSummary struct {
+	Path    string `json:"path"`
+	Entries int    `json:"entries"`
+	Bytes   int64  `json:"bytes"`
+}
+
+type cacheClearResult struct {
+	Path    string `json:"path"`
+	Removed int    `json:"removed"`
 }
 
 func resolveCacheDir() (string, error) {
@@ -69,6 +57,46 @@ func resolveCacheDir() (string, error) {
 		return "", err
 	}
 	return filepath.Join(home, ".cache", "costctl"), nil
+}
+
+func runCacheShow(cmd *cobra.Command, args []string) error {
+	dir, err := resolveCacheDir()
+	if err != nil {
+		return err
+	}
+	entries, total, err := summarizeCache(dir)
+	if err != nil {
+		return err
+	}
+	summary := cacheSummary{
+		Path:    dir,
+		Entries: entries,
+		Bytes:   total,
+	}
+	if flagJSON {
+		return json.NewEncoder(cmd.OutOrStdout()).Encode(summary)
+	}
+	fmt.Fprintf(cmd.OutOrStdout(), "path:     %s\n", summary.Path)
+	fmt.Fprintf(cmd.OutOrStdout(), "entries:  %d\n", summary.Entries)
+	fmt.Fprintf(cmd.OutOrStdout(), "bytes:    %d (%.1f KiB)\n", summary.Bytes, float64(summary.Bytes)/1024)
+	return nil
+}
+
+func runCacheClear(cmd *cobra.Command, args []string) error {
+	dir, err := resolveCacheDir()
+	if err != nil {
+		return err
+	}
+	removed, err := clearCache(dir)
+	if err != nil {
+		return err
+	}
+	result := cacheClearResult{Path: dir, Removed: removed}
+	if flagJSON {
+		return json.NewEncoder(cmd.OutOrStdout()).Encode(result)
+	}
+	fmt.Fprintf(cmd.ErrOrStderr(), "removed %d cache entries from %s\n", result.Removed, result.Path)
+	return nil
 }
 
 func summarizeCache(dir string) (entries int, total int64, err error) {

@@ -90,8 +90,11 @@ func (c *Client) query(ctx context.Context, filter string) ([]Item, error) {
 		if err != nil {
 			return nil, fmt.Errorf("azureretail: GET %s: %w", endpoint, err)
 		}
-		body, _ := io.ReadAll(resp.Body)
-		resp.Body.Close()
+		body, err := io.ReadAll(resp.Body)
+		_ = resp.Body.Close()
+		if err != nil {
+			return nil, fmt.Errorf("azureretail: reading response body: %w", err)
+		}
 		if resp.StatusCode != http.StatusOK {
 			return nil, fmt.Errorf("azureretail: GET %s: %s: %s",
 				endpoint, resp.Status, truncate(string(body), 200))

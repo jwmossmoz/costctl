@@ -1,10 +1,13 @@
 package cloudprice
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -227,5 +230,36 @@ func TestCache_RoundTrip(t *testing.T) {
 	}
 	if got := atomic.LoadInt32(&hits); got != 1 {
 		t.Errorf("server hit %d times; want 1 (second call should be cache hit)", got)
+	}
+}
+
+func TestCache_DoesNotPersistAPIKey(t *testing.T) {
+	c, _ := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"Status":"ok","Data":{"Prices":[]}}`))
+	})
+	c.APIKey = "secret-test-key"
+	c.CacheDir = t.TempDir()
+	c.UseCache = true
+	c.CacheTTL = time.Hour
+
+	if _, err := c.GCPCurrent(context.Background(), "n2-standard-2"); err != nil {
+		t.Fatalf("GCPCurrent: %v", err)
+	}
+	entries, err := os.ReadDir(c.CacheDir)
+	if err != nil {
+		t.Fatalf("ReadDir: %v", err)
+	}
+	if len(entries) != 1 {
+		t.Fatalf("cache entries = %d, want 1", len(entries))
+	}
+	body, err := os.ReadFile(filepath.Join(c.CacheDir, entries[0].Name()))
+	if err != nil {
+		t.Fatalf("ReadFile: %v", err)
+	}
+	for _, forbidden := range [][]byte{[]byte("secret-test-key"), []byte("subscription-key")} {
+		if bytes.Contains(body, forbidden) {
+			t.Fatalf("cache file contains %q: %s", forbidden, body)
+		}
 	}
 }

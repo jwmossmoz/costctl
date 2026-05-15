@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io/fs"
+	"net/url"
 	"os"
 	"path/filepath"
 	"time"
@@ -51,8 +52,19 @@ func (c *Client) cacheDir() (string, error) {
 }
 
 func cacheKey(url string) string {
-	h := sha256.Sum256([]byte(url))
+	h := sha256.Sum256([]byte(cacheURL(url)))
 	return hex.EncodeToString(h[:])
+}
+
+func cacheURL(raw string) string {
+	u, err := url.Parse(raw)
+	if err != nil {
+		return raw
+	}
+	q := u.Query()
+	q.Del("subscription-key")
+	u.RawQuery = q.Encode()
+	return u.String()
 }
 
 // readCache returns (body, status, true) if a non-stale entry exists.
@@ -103,7 +115,7 @@ func (c *Client) writeCache(url string, status int, body []byte) {
 		return
 	}
 	e := cacheEntry{
-		URL:       url,
+		URL:       cacheURL(url),
 		FetchedAt: time.Now(),
 		Status:    status,
 		Body:      body,

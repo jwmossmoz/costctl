@@ -11,7 +11,6 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/jwmossmoz/costctl/internal/azureretail"
-	cfg "github.com/jwmossmoz/costctl/internal/config"
 )
 
 const envCloudpriceKey = "CLOUDPRICE_API_KEY"
@@ -75,6 +74,9 @@ func runAzureSpotCurrent(cmd *cobra.Command, args []string) error {
 	if ctx == nil {
 		ctx = context.Background()
 	}
+	if err := validateAzureSpotCurrentFlags(); err != nil {
+		return err
+	}
 	progress("fetching Azure Retail Prices for %s ...", flagSKU)
 	items, err := azureretail.New().SpotPrices(ctx, flagSKU)
 	if err != nil {
@@ -110,14 +112,13 @@ func runAzureSpotHistory(cmd *cobra.Command, args []string) error {
 	if ctx == nil {
 		ctx = context.Background()
 	}
-
-	key, source := cfg.ResolveAPIKey(cfg.ProviderCloudprice, flagAPIKey, envCloudpriceKey)
-	if key == "" {
-		return fmt.Errorf("no cloudprice.net key found. Pass --api-key, set %s, "+
-			"or run: costctl config set-key cloudprice <KEY>", envCloudpriceKey)
+	if err := validateAzureSpotHistoryFlags(); err != nil {
+		return err
 	}
-	if flagVerbose {
-		fmt.Fprintf(os.Stderr, "using cloudprice key from %s\n", source)
+
+	key, err := requireCloudpriceKey(flagAPIKey)
+	if err != nil {
+		return err
 	}
 
 	progress("fetching cloudprice history for %s in %s ...", flagSKU, regionLabel(flagRegion))
@@ -185,8 +186,8 @@ func filterAzureRetail(items []azureretail.Item, region, osFilter string) []azur
 }
 
 func matchOS(productName, osFilter string) bool {
-	isWindows := strings.Contains(productName, "Windows")
-	switch strings.ToLower(osFilter) {
+	isWindows := strings.Contains(strings.ToLower(productName), "windows")
+	switch strings.ToLower(strings.TrimSpace(osFilter)) {
 	case "", "any":
 		return true
 	case "windows":
@@ -195,6 +196,41 @@ func matchOS(productName, osFilter string) bool {
 		return !isWindows
 	}
 	return true
+}
+
+func validateAzureSpotCurrentFlags() error {
+	flagSKU = strings.TrimSpace(flagSKU)
+	flagRegion = strings.TrimSpace(flagRegion)
+	if strings.TrimSpace(flagSKU) == "" {
+		return usageErrorf("--sku is required")
+	}
+	if err := validateOSFilter(flagOS); err != nil {
+		return err
+	}
+	flagOS = strings.ToLower(strings.TrimSpace(flagOS))
+	return nil
+}
+
+func validateAzureSpotHistoryFlags() error {
+	if err := validateAzureSpotCurrentFlags(); err != nil {
+		return err
+	}
+	flagTier = strings.ToLower(strings.TrimSpace(flagTier))
+	switch flagTier {
+	case "spot", "standard", "low":
+		return nil
+	default:
+		return usageErrorf("invalid --tier %q (want spot, standard, or low)", flagTier)
+	}
+}
+
+func validateOSFilter(osFilter string) error {
+	switch strings.ToLower(strings.TrimSpace(osFilter)) {
+	case "", "any", "linux", "windows":
+		return nil
+	default:
+		return usageErrorf("invalid --os %q (want linux, windows, or any)", osFilter)
+	}
 }
 
 func regionLabel(r string) string {

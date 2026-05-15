@@ -66,7 +66,7 @@ brews:
       token: "{{ .Env.HOMEBREW_TAP_TOKEN }}"
     directory: Formula
     homepage: "https://github.com/jwmossmoz/costctl"
-    description: "Multi-cloud cost and pricing CLI (Azure spot prices today)"
+    description: "Multi-cloud cost and pricing CLI (Azure and GCP spot prices today)"
     license: "MIT"
     commit_author:
       name: goreleaser-bot
