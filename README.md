@@ -98,8 +98,10 @@ Successful cloudprice responses are cached on disk at
 Override with `--cache-ttl 1h`, bypass for one run with `--no-cache`, or set
 `COSTCTL_CACHE_DIR=<path>` to relocate.
 
-429 rate-limit responses are retried transparently with exponential backoff
-and respect the `Retry-After` header.
+429 rate-limit responses are retried transparently with exponential backoff.
+CloudPrice retries honor `Retry-After`; Azure Retail retries honor
+`x-ms-ratelimit-microsoft.consumption-retry-after` and `Retry-After`. Azure
+Retail 503 responses are retried the same way.
 
 ## Examples
 
